@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlalchemy>=2.0
+pydantic>=2
+httpx
+openai
+streamlit
+pytest
+python-dotenv
