@@ -11,12 +11,15 @@ except ImportError:
     pass
 
 import httpx  # noqa: E402
+import threading, time  # noqa: E402
+import requests  # noqa: E402
 import streamlit as st  # noqa: E402
+import uvicorn # noqa: E402
 
 from app.db import Approval, AuditLog, Payment, SessionLocal  # noqa: E402
 from panel.actions import approve, reject  # noqa: E402
 
-st.set_page_config(page_title="Ops Agent Approvals", layout="wide")
+st.set_page_config(page_title="ShowUp — Guardrailed Ops Agent", layout="wide")
 st.title("Ops Agent — Human Approval Panel")
 reviewer = st.sidebar.text_input("Reviewer name", "salon-manager")
 api = httpx.Client(base_url=os.getenv("API_URL", "http://localhost:8000"), timeout=30)

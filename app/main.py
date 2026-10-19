@@ -123,6 +123,10 @@ def _settle_fee_charge(db, pay):
 
 
 # ---------- endpoints ----------
+@app.get("/")
+def get_root():
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat() + "Z"}
+
 @app.post("/bookings", status_code=201)
 def create_booking(body: BookingIn, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
                    db=Depends(get_db)):
