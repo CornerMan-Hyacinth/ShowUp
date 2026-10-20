@@ -18,8 +18,71 @@ import uvicorn # noqa: E402
 
 from app.db import Approval, AuditLog, Payment, SessionLocal  # noqa: E402
 from panel.actions import approve, reject  # noqa: E402
+from agent.loop import process_next_message  # noqa: E402
+from agent.retry import RetryableError  # noqa: E402
 
 st.set_page_config(page_title="ShowUp — Guardrailed Ops Agent", layout="wide")
+
+# ----- SEED ---------------
+@st.cache_resource
+def init_db():
+    from seed import seed_if_empty
+    seed_if_empty()
+    return True
+
+init_db()
+
+# ----- API SERVER ---------------
+@st.cache_resource
+def start_api():
+    from app.main import app as fastapi_app
+    config = uvicorn.Config(fastapi_app, host="127.0.0.1", port=8000, log_level="warning")
+    server = uvicorn.Server(config)
+    threading.Thread(target=server.run, daemon=True).start()
+    for _ in range(50):
+        try:
+            requests.get("http://127.0.0.1:8000/health", timeout=1)
+            return server
+        except requests.ConnectionError:
+            time.sleep(0.2)
+    st.error("API failed to start")
+    st.stop()
+    
+start_api()
+API = "http://127.0.0.1:8000"
+
+# ----- AGENT LOOP --------------
+@st.cache_resource
+def get_agent_deps():
+    import httpx
+    from agent import LLM
+    from agent import Tracer
+    api = httpx.Client(base_url=os.getenv("API_URL", "http://127.0.0.1:8000"), timeout=30)
+    return api, LLM(), Tracer()
+
+st.sidebar.header("Agent Control")
+if st.sidebar.button("▶ Process next message", type="primary"):
+    api, llm, tracer = get_agent_deps()
+    db = SessionLocal()
+    try:
+        with st.spinner("Agent reasoning..."):
+            result = process_next_message(db, api, llm, tracer)
+    except RetryableError:
+        st.sidebar.warning("Rate-limited — wait ~20s and try again.")
+        result = None
+    finally:
+        db.close()
+
+    if result:
+        st.sidebar.success(f"Processed #{result['message_id']}: "
+                           f"{result['tool_calls']} tool calls, "
+                           f"${result['cost_usd']:.4f}")
+    else:
+        st.sidebar.info("Inbox empty - all messages processed.")
+    time.sleep(0.5)
+    st.rerun()
+
+# ----- PANEL ------------------
 st.title("Ops Agent — Human Approval Panel")
 reviewer = st.sidebar.text_input("Reviewer name", "salon-manager")
 api = httpx.Client(base_url=os.getenv("API_URL", "http://localhost:8000"), timeout=30)

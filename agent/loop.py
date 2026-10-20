@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
+from .retry import RetryableError, is_retryable
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
@@ -138,7 +139,12 @@ def process_message(db, api, llm, msg, tracer, system_prompt=None, prompt_versio
                 break
         else:
             forced = "LLM round limit reached"
+    except RetryableError:
+        raise
     except Exception as e:
+        if is_retryable(e):
+            db.rollback()
+            raise RetryableError(str(e)) from e
         forced = f"LLM error: {e}"
         box.audit("llm_error", "message", msg.id, None, str(e)[:500], "error")
     # Safety net: no terminal action, or limit hit -> force escalate (never guess)
@@ -155,6 +161,16 @@ def process_message(db, api, llm, msg, tracer, system_prompt=None, prompt_versio
     tracer.record(run)
     return run
 
+def process_next_message(db, api, llm, tracer):
+    """Process the oldest unprocessed message. Returns the run dict, or None if inbox empty."""
+    msg = (db.query(InboundMessage)
+             .filter(InboundMessage.processed_at.is_(None))
+             .order_by(InboundMessage.id)
+             .first())
+    if msg is None:
+        return None
+    prompt, version = load_prompt()
+    return process_message(db, api, llm, msg, tracer, prompt, version)
 
 def run_loop(once=False, interval=3.0):
     import httpx
@@ -166,13 +182,22 @@ def run_loop(once=False, interval=3.0):
         try:
             pending = db.query(InboundMessage).filter(InboundMessage.processed_at.is_(None)).order_by(InboundMessage.id).all()
             for msg in pending:
-                run = process_message(db, api, llm, msg, tracer, prompt, version)
-                print(f"message {msg.id}: {run['tool_calls']} tool calls, {run['prompt_tokens']}+{run['completion_tokens']} tokens, "
-                      f"${run['cost_usd']:.6f} | {run['final_text']}")
+                try:
+                    run = process_message(db, api, llm, msg, tracer, prompt, version)
+                    print(f"message {msg.id}: {run['tool_calls']} tool calls, {run['prompt_tokens']}+{run['completion_tokens']} tokens, "
+                        f"${run['cost_usd']:.6f} | {run['final_text']}")
+                except RetryableError:
+                    print(f"message {msg.id}: rate-limited, will retry next poll")
+                    time.sleep(20)
+                    break
+                except Exception as e:
+                    db.rollback()
+                    print(f"message {msg.id}: UNHANDLED ERROR — left unprocessed: {e}")
+                    continue
         finally:
             db.close()
         if once:
-            return
+            return True
         time.sleep(interval)
 
 
