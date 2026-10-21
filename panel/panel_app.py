@@ -57,8 +57,7 @@ API = "http://127.0.0.1:8000"
 @st.cache_resource
 def get_agent_deps():
     import httpx
-    from agent.loop import LLM
-    from agent.loop import Tracer
+    from agent.loop import LLM, Tracer
     api = httpx.Client(base_url=os.getenv("API_URL", "http://127.0.0.1:8000"), timeout=30)
     return api, LLM(), Tracer()
 
