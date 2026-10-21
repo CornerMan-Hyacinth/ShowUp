@@ -26,7 +26,9 @@ st.set_page_config(page_title="ShowUp — Guardrailed Ops Agent", layout="wide")
 # ----- SEED ---------------
 @st.cache_resource
 def init_db():
+    from app.db import Base, engine
     from seed import seed_if_empty
+    Base.metadata.create_all(engine) # create tables before seeding
     seed_if_empty()
     return True
 
